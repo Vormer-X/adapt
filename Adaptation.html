@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Фильмы</title>
+    <!-- Firebase -->
+    <script type="importmap">
+        {
+            "imports": {
+                "firebase/app": "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js",
+                "firebase/firestore": "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js"
+            }
+        }
+    </script>
+    <link rel="stylesheet" href="Adaptation.css">
+</head>
+<body>
+<div class="app">
+    <div class="toolbar">
+        <input type="text" id="movieInput" placeholder="Название фильма" autocomplete="off">
+        <button id="addBtn">+ Добавить</button>
+        <button id="resetBtn" class="reset-btn">Сброс</button>
+    </div>
+    <div id="moviesList" class="movies">
+        <div class="loading">Загрузка...</div>
+    </div>
+    <footer>Синхронизация между устройствами</footer>
+</div>
+
+<script type="module">
+    import { initializeApp } from "firebase/app";
+    import { getFirestore, collection, addDoc, deleteDoc, doc, onSnapshot, query, orderBy, getDocs, writeBatch } from "firebase/firestore";
+
+    // ---------- НАСТРОЙКА FIREBASE (ЗАМЕНИТЕ НА СВОИ ДАННЫЕ) ----------
+    // Если не настроить, сайт работает локально (без синхронизации между устройствами)
+    const firebaseConfig = {
+        apiKey: "AIzaSyDummyReplace12345678",
+        authDomain: "example.firebaseapp.com",
+        projectId: "your-project-id",
+        storageBucket: "your-project.appspot.com",
+        messagingSenderId: "000000000000",
+        appId: "1:000000000000:web:abcdef123456"
+    };
+    // -----------------------------------------------------------------
+
+    let db, moviesCollection;
+    let realtimeMode = false;
+    let unsubscribe = null;
+    let localMovies = []; // для локального режима
+
+    // helpers
+    function escapeHtml(str) {
+        return str.replace(/[&<>]/g, function(m) {
+            if (m === '&') return '&amp;';
+            if (m === '<') return '&lt;';
+            if (m === '>') return '&gt;';
+            return m;
+        });
+    }
+
+    // ---- ЛОКАЛЬНЫЙ РЕЖИМ (простой, без синхронизации) ----
+    function renderLocal() {
+        const container = document.getElementById("moviesList");
+        if (!container) return;
+        if (localMovies.length === 0) {
+            container.innerHTML = '<div class="empty">Список пуст. Добавьте фильм.</div>';
+            return;
+        }
+        let html = '';
+        localMovies.forEach((movie, idx) => {
+            html += `
+                <div class="card">
+                    <div class="card-title">🎬 ${escapeHtml(movie)}</div>
+                    <div class="card-actions">
+                        <button class="delete" data-index="${idx}">Удалить</button>
+                    </div>
+                </div>
+            `;
+        });
+        container.innerHTML = html;
+        document.querySelectorAll('.delete').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                const idx = parseInt(btn.getAttribute('data-index'));
+                if (!isNaN(idx)) {
+                    localMovies.splice(idx, 1);
+                    renderLocal();
+                    attachLocalHandlers();
+                }
+            });
+        });
+    }
+
+    function attachLocalHandlers() {
+        const addBtn = document.getElementById("addBtn");
+        const resetBtn = document.getElementById("resetBtn");
+        const inputEl = document.getElementById("movieInput");
+        if (!addBtn || !resetBtn) return;
+        const newAdd = addBtn.cloneNode(true);
+        const newReset = resetBtn.cloneNode(true);
+        addBtn.parentNode.replaceChild(newAdd, addBtn);
+        resetBtn.parentNode.replaceChild(newReset, resetBtn);
+        
+        newAdd.addEventListener('click', () => {
+            const val = inputEl.value.trim();
+            if (val === "") return;
+            localMovies.push(val);
+            inputEl.value = "";
+            renderLocal();
+            attachLocalHandlers();
+        });
+        newReset.addEventListener('click', () => {
+            localMovies = ["Властелин колец", "Хоббит", "Звёздные войны", "Гарри Поттер", "Джентльмены", "Бэтмен", "Форсаж"];
+            renderLocal();
+            attachLocalHandlers();
+        });
+    }
+
+    // ---- FIRESTORE РЕЖИМ (синхронизация) ----
+    function renderFirestore(snapshot) {
+        const container = document.getElementById("moviesList");
+        if (!container) return;
+        if (snapshot.empty) {
+            container.innerHTML = '<div class="empty">Нет фильмов. Добавьте.</div>';
+            return;
+        }
+        let html = '';
+        snapshot.forEach(docSnap => {
+            const data = docSnap.data();
+            const name = data.name || "?";
+            const id = docSnap.id;
+            html += `
+                <div class="card" data-id="${id}">
+                    <div class="card-title">📽️ ${escapeHtml(name)}</div>
+                    <div class="card-actions">
+                        <button class="delete" data-id="${id}">Удалить</button>
+                    </div>
+                </div>
+            `;
+        });
+        container.innerHTML = html;
+        document.querySelectorAll('.delete').forEach(btn => {
+            btn.addEventListener('click', async (e) => {
+                const fireId = btn.getAttribute('data-id');
+                if (fireId && realtimeMode && db) {
+                    try {
+                        await deleteDoc(doc(db, "movies", fireId));
+                    } catch(err) { console.error(err); }
+                }
+            });
+        });
+    }
+
+    async function seedDefaultFirestore() {
+        if (!realtimeMode) return;
+        const q = query(collection(db, "movies"), orderBy("createdAt"));
+        const snap = await getDocs(q);
+        if (snap.empty) {
+            const defaults = ["Властелин колец", "Хоббит", "Звёздные войны", "Гарри Поттер", "Джентльмены", "Бэтмен", "Форсаж"];
+            const batch = writeBatch(db);
+            defaults.forEach((film, i) => {
+                const ref = doc(collection(db, "movies"));
+                batch.set(ref, { name: film, createdAt: new Date(Date.now() + i * 100) });
+            });
+            await batch.commit();
+        }
+    }
+
+    function startFirestoreSync() {
+        if (!realtimeMode) return;
+        if (unsubscribe) unsubscribe();
+        const q = query(collection(db, "movies"), orderBy("createdAt", "asc"));
+        unsubscribe = onSnapshot(q, 
+            (snap) => renderFirestore(snap),
+            (err) => {
+                console.warn("Firestore ошибка, переключаем в локальный режим", err);
+                if (realtimeMode) {
+                    realtimeMode = false;
+                    if (unsubscribe) unsubscribe();
+                    localMovies = ["Властелин колец", "Хоббит", "Звёздные войны", "Гарри Поттер", "Джентльмены", "Бэтмен", "Форсаж"];
+                    renderLocal();
+                    attachLocalHandlers();
+                    const footer = document.querySelector("footer");
+                    if (footer) footer.innerHTML += " <span style='color:#f97316;'>⚡ Локальный режим</span>";
+                }
+            }
+        );
+    }
+
+    async function addMovieFirestore(title) {
+        if (!realtimeMode) return false;
+        try {
+            await addDoc(collection(db, "movies"), { name: title.trim(), createdAt: new Date() });
+            return true;
+        } catch(e) { return false; }
+    }
+
+    async function resetFirestore() {
+        if (!realtimeMode) return;
+        try {
+            const snap = await getDocs(collection(db, "movies"));
+            const batch = writeBatch(db);
+            snap.forEach(d => batch.delete(d.ref));
+            await batch.commit();
+            const defaults = ["Властелин колец", "Хоббит", "Звёздные войны", "Гарри Поттер", "Джентльмены", "Бэтмен", "Форсаж"];
+            const addBatch = writeBatch(db);
+            defaults.forEach((film, i) => {
+                const ref = doc(collection(db, "movies"));
+                addBatch.set(ref, { name: film, createdAt: new Date(Date.now() + i * 100) });
+            });
+            await addBatch.commit();
+        } catch(e) { console.error(e); }
+    }
+
+    function attachFirestoreHandlers() {
+        const addBtn = document.getElementById("addBtn");
+        const resetBtn = document.getElementById("resetBtn");
+        const inputEl = document.getElementById("movieInput");
+        if (!addBtn || !resetBtn) return;
+        const newAdd = addBtn.cloneNode(true);
+        const newReset = resetBtn.cloneNode(true);
+        addBtn.parentNode.replaceChild(newAdd, addBtn);
+        resetBtn.parentNode.replaceChild(newReset, resetBtn);
+        
+        newAdd.addEventListener('click', async () => {
+            const val = inputEl.value.trim();
+            if (val === "") return;
+            if (realtimeMode) {
+                const ok = await addMovieFirestore(val);
+                if (ok) inputEl.value = "";
+            } else {
+                localMovies.push(val);
+                inputEl.value = "";
+                renderLocal();
+                attachLocalHandlers();
+            }
+        });
+        newReset.addEventListener('click', async () => {
+            if (realtimeMode) {
+                if (confirm("Сбросить к 7 фильмам?")) await resetFirestore();
+            } else {
+                localMovies = ["Властелин колец", "Хоббит", "Звёздные войны", "Гарри Поттер", "Джентльмены", "Бэтмен", "Форсаж"];
+                renderLocal();
+                attachLocalHandlers();
+            }
+        });
+    }
+
+    // Инициализация: пробуем Firebase
+    function init() {
+        try {
+            const app = initializeApp(firebaseConfig);
+            db = getFirestore(app);
+            moviesCollection = collection(db, "movies");
+            realtimeMode = true;
+            seedDefaultFirestore().then(() => {
+                startFirestoreSync();
+                attachFirestoreHandlers();
+            }).catch(() => fallbackToLocal());
+        } catch(e) {
+            fallbackToLocal();
+        }
+    }
+
+    function fallbackToLocal() {
+        realtimeMode = false;
+        localMovies = ["Властелин колец", "Хоббит", "Звёздные войны", "Гарри Поттер", "Джентльмены", "Бэтмен", "Форсаж"];
+        renderLocal();
+        attachLocalHandlers();
+        const footer = document.querySelector("footer");
+        if (footer && !footer.querySelector(".local-note")) {
+            const note = document.createElement("div");
+            note.className = "local-note";
+            note.style.marginTop = "8px";
+            note.style.color = "#facc15";
+            note.style.fontSize = "0.7rem";
+            note.innerText = "⚠️ Локальный режим (синхронизация не активна) — вставьте ключи Firebase для синхронизации между устройствами";
+            footer.appendChild(note);
+        }
+    }
+
+    init();
+</script>
+</body>
+</html>
