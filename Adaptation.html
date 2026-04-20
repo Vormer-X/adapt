@@ -4,16 +4,123 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Фильмы</title>
-    <!-- Firebase -->
-    <script type="importmap">
-        {
-            "imports": {
-                "firebase/app": "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js",
-                "firebase/firestore": "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js"
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            background: #0a0c10;
+            font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
+            padding: 20px;
+        }
+        .app {
+            max-width: 1000px;
+            margin: 0 auto;
+        }
+        .toolbar {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 25px;
+            flex-wrap: wrap;
+            background: #11151c;
+            padding: 12px;
+            border-radius: 12px;
+        }
+        .toolbar input {
+            flex: 1;
+            background: #1a1f2a;
+            border: 1px solid #2c313e;
+            padding: 10px 14px;
+            border-radius: 30px;
+            color: white;
+            font-size: 1rem;
+            outline: none;
+        }
+        .toolbar input:focus {
+            border-color: #4b7bec;
+        }
+        button {
+            background: #2c313e;
+            border: none;
+            padding: 8px 20px;
+            border-radius: 30px;
+            color: white;
+            font-weight: 500;
+            cursor: pointer;
+            font-size: 0.9rem;
+        }
+        button:hover {
+            background: #3e4455;
+        }
+        .reset-btn {
+            background: #2a1f2c;
+        }
+        .export-btn {
+            background: #1f3a2f;
+        }
+        .import-btn {
+            background: #2a2a3a;
+        }
+        .movies {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+            gap: 16px;
+        }
+        .card {
+            background: #11151c;
+            border: 1px solid #252b36;
+            border-radius: 18px;
+            padding: 16px;
+            display: flex;
+            flex-direction: column;
+        }
+        .card-title {
+            font-size: 1.25rem;
+            font-weight: 600;
+            word-break: break-word;
+            margin-bottom: 12px;
+            color: #f0f3fa;
+        }
+        .card-actions {
+            margin-top: auto;
+            display: flex;
+            justify-content: flex-end;
+        }
+        .delete {
+            background: #2a1c1c;
+            padding: 6px 16px;
+            font-size: 0.8rem;
+            border-radius: 40px;
+        }
+        .delete:hover {
+            background: #4a2a2a;
+        }
+        .empty {
+            text-align: center;
+            padding: 50px;
+            background: #0f131a;
+            border-radius: 24px;
+            color: #6c7a8e;
+        }
+        footer {
+            margin-top: 30px;
+            font-size: 0.7rem;
+            text-align: center;
+            color: #3e4455;
+            border-top: 1px solid #1e232c;
+            padding-top: 20px;
+        }
+        @media (max-width: 550px) {
+            .toolbar {
+                flex-direction: column;
+            }
+            button {
+                width: 100%;
             }
         }
-    </script>
-    <link rel="stylesheet" href="Adaptation.css">
+    </style>
 </head>
 <body>
 <div class="app">
@@ -21,33 +128,24 @@
         <input type="text" id="movieInput" placeholder="Название фильма" autocomplete="off">
         <button id="addBtn">+ Добавить</button>
         <button id="resetBtn" class="reset-btn">Сброс</button>
+        <button id="exportBtn" class="export-btn">💾 Сохранить список</button>
+        <button id="importBtn" class="import-btn">📂 Загрузить список</button>
+        <input type="file" id="fileInput" accept=".json" style="display: none;">
     </div>
     <div id="moviesList" class="movies">
         <div class="loading">Загрузка...</div>
     </div>
-    <footer>Синхронизация между устройствами</footer>
+    <footer>📀 Все данные хранятся в браузере. Чтобы синхронизировать с другим устройством — сохраните файл и загрузите его там.</footer>
 </div>
 
-<script type="module">
-    import { initializeApp } from "firebase/app";
-    import { getFirestore, collection, addDoc, deleteDoc, doc, onSnapshot, query, orderBy, getDocs, writeBatch } from "firebase/firestore";
-
-    // ---------- НАСТРОЙКА FIREBASE (ЗАМЕНИТЕ НА СВОИ ДАННЫЕ) ----------
-    // Если не настроить, сайт работает локально (без синхронизации между устройствами)
-    const firebaseConfig = {
-        apiKey: "AIzaSyDummyReplace12345678",
-        authDomain: "example.firebaseapp.com",
-        projectId: "your-project-id",
-        storageBucket: "your-project.appspot.com",
-        messagingSenderId: "000000000000",
-        appId: "1:000000000000:web:abcdef123456"
-    };
-    // -----------------------------------------------------------------
-
-    let db, moviesCollection;
-    let realtimeMode = false;
-    let unsubscribe = null;
-    let localMovies = []; // для локального режима
+<script>
+    // Ключ для localStorage
+    const STORAGE_KEY = 'my_movies_list';
+    
+    // Начальные 7 фильмов
+    const DEFAULT_MOVIES = ["Властелин колец", "Хоббит", "Звёздные войны", "Гарри Поттер", "Джентльмены", "Бэтмен", "Форсаж"];
+    
+    let movies = []; // текущий список
 
     // helpers
     function escapeHtml(str) {
@@ -59,16 +157,41 @@
         });
     }
 
-    // ---- ЛОКАЛЬНЫЙ РЕЖИМ (простой, без синхронизации) ----
-    function renderLocal() {
+    // Сохранить в localStorage
+    function saveToLocalStorage() {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(movies));
+    }
+
+    // Загрузить из localStorage
+    function loadFromLocalStorage() {
+        const stored = localStorage.getItem(STORAGE_KEY);
+        if (stored) {
+            try {
+                const parsed = JSON.parse(stored);
+                if (Array.isArray(parsed)) {
+                    movies = parsed;
+                } else {
+                    movies = [...DEFAULT_MOVIES];
+                }
+            } catch(e) {
+                movies = [...DEFAULT_MOVIES];
+            }
+        } else {
+            movies = [...DEFAULT_MOVIES];
+        }
+        renderMovies();
+    }
+
+    // Отрисовка списка
+    function renderMovies() {
         const container = document.getElementById("moviesList");
         if (!container) return;
-        if (localMovies.length === 0) {
+        if (movies.length === 0) {
             container.innerHTML = '<div class="empty">Список пуст. Добавьте фильм.</div>';
             return;
         }
         let html = '';
-        localMovies.forEach((movie, idx) => {
+        movies.forEach((movie, idx) => {
             html += `
                 <div class="card">
                     <div class="card-title">🎬 ${escapeHtml(movie)}</div>
@@ -79,207 +202,113 @@
             `;
         });
         container.innerHTML = html;
+        // вешаем события удаления
         document.querySelectorAll('.delete').forEach(btn => {
             btn.addEventListener('click', (e) => {
                 const idx = parseInt(btn.getAttribute('data-index'));
                 if (!isNaN(idx)) {
-                    localMovies.splice(idx, 1);
-                    renderLocal();
-                    attachLocalHandlers();
+                    movies.splice(idx, 1);
+                    saveToLocalStorage();
+                    renderMovies();
                 }
             });
         });
     }
 
-    function attachLocalHandlers() {
+    // Экспорт в файл
+    function exportToFile() {
+        const dataStr = JSON.stringify(movies, null, 2);
+        const blob = new Blob([dataStr], {type: 'application/json'});
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `movies_backup_${new Date().toISOString().slice(0,19)}.json`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+    }
+
+    // Импорт из файла
+    function importFromFile(file) {
+        const reader = new FileReader();
+        reader.onload = (e) => {
+            try {
+                const imported = JSON.parse(e.target.result);
+                if (Array.isArray(imported)) {
+                    movies = imported;
+                    saveToLocalStorage();
+                    renderMovies();
+                    alert('Список успешно загружен!');
+                } else {
+                    alert('Ошибка: файл должен содержать массив с названиями фильмов.');
+                }
+            } catch(err) {
+                alert('Ошибка чтения файла. Убедитесь, что это корректный JSON.');
+            }
+        };
+        reader.readAsText(file);
+    }
+
+    // Сброс к 7 фильмам
+    function resetToDefault() {
+        movies = [...DEFAULT_MOVIES];
+        saveToLocalStorage();
+        renderMovies();
+    }
+
+    // Добавление фильма
+    function addMovie(title) {
+        const trimmed = title.trim();
+        if (trimmed === "") return false;
+        movies.push(trimmed);
+        saveToLocalStorage();
+        renderMovies();
+        return true;
+    }
+
+    // Навешиваем обработчики на кнопки (без дублирования через cloneNode)
+    function bindEvents() {
         const addBtn = document.getElementById("addBtn");
         const resetBtn = document.getElementById("resetBtn");
-        const inputEl = document.getElementById("movieInput");
-        if (!addBtn || !resetBtn) return;
-        const newAdd = addBtn.cloneNode(true);
-        const newReset = resetBtn.cloneNode(true);
-        addBtn.parentNode.replaceChild(newAdd, addBtn);
-        resetBtn.parentNode.replaceChild(newReset, resetBtn);
-        
-        newAdd.addEventListener('click', () => {
-            const val = inputEl.value.trim();
-            if (val === "") return;
-            localMovies.push(val);
-            inputEl.value = "";
-            renderLocal();
-            attachLocalHandlers();
-        });
-        newReset.addEventListener('click', () => {
-            localMovies = ["Властелин колец", "Хоббит", "Звёздные войны", "Гарри Поттер", "Джентльмены", "Бэтмен", "Форсаж"];
-            renderLocal();
-            attachLocalHandlers();
-        });
-    }
+        const exportBtn = document.getElementById("exportBtn");
+        const importBtn = document.getElementById("importBtn");
+        const fileInput = document.getElementById("fileInput");
+        const movieInput = document.getElementById("movieInput");
 
-    // ---- FIRESTORE РЕЖИМ (синхронизация) ----
-    function renderFirestore(snapshot) {
-        const container = document.getElementById("moviesList");
-        if (!container) return;
-        if (snapshot.empty) {
-            container.innerHTML = '<div class="empty">Нет фильмов. Добавьте.</div>';
-            return;
+        if (addBtn) {
+            addBtn.onclick = () => {
+                const val = movieInput.value;
+                if (addMovie(val)) movieInput.value = "";
+            };
         }
-        let html = '';
-        snapshot.forEach(docSnap => {
-            const data = docSnap.data();
-            const name = data.name || "?";
-            const id = docSnap.id;
-            html += `
-                <div class="card" data-id="${id}">
-                    <div class="card-title">📽️ ${escapeHtml(name)}</div>
-                    <div class="card-actions">
-                        <button class="delete" data-id="${id}">Удалить</button>
-                    </div>
-                </div>
-            `;
-        });
-        container.innerHTML = html;
-        document.querySelectorAll('.delete').forEach(btn => {
-            btn.addEventListener('click', async (e) => {
-                const fireId = btn.getAttribute('data-id');
-                if (fireId && realtimeMode && db) {
-                    try {
-                        await deleteDoc(doc(db, "movies", fireId));
-                    } catch(err) { console.error(err); }
+        if (resetBtn) resetBtn.onclick = resetToDefault;
+        if (exportBtn) exportBtn.onclick = exportToFile;
+        if (importBtn) {
+            importBtn.onclick = () => fileInput.click();
+        }
+        if (fileInput) {
+            fileInput.onchange = (e) => {
+                if (e.target.files && e.target.files[0]) {
+                    importFromFile(e.target.files[0]);
+                    fileInput.value = ''; // чтобы можно было загрузить тот же файл повторно
                 }
-            });
-        });
-    }
-
-    async function seedDefaultFirestore() {
-        if (!realtimeMode) return;
-        const q = query(collection(db, "movies"), orderBy("createdAt"));
-        const snap = await getDocs(q);
-        if (snap.empty) {
-            const defaults = ["Властелин колец", "Хоббит", "Звёздные войны", "Гарри Поттер", "Джентльмены", "Бэтмен", "Форсаж"];
-            const batch = writeBatch(db);
-            defaults.forEach((film, i) => {
-                const ref = doc(collection(db, "movies"));
-                batch.set(ref, { name: film, createdAt: new Date(Date.now() + i * 100) });
-            });
-            await batch.commit();
+            };
         }
-    }
-
-    function startFirestoreSync() {
-        if (!realtimeMode) return;
-        if (unsubscribe) unsubscribe();
-        const q = query(collection(db, "movies"), orderBy("createdAt", "asc"));
-        unsubscribe = onSnapshot(q, 
-            (snap) => renderFirestore(snap),
-            (err) => {
-                console.warn("Firestore ошибка, переключаем в локальный режим", err);
-                if (realtimeMode) {
-                    realtimeMode = false;
-                    if (unsubscribe) unsubscribe();
-                    localMovies = ["Властелин колец", "Хоббит", "Звёздные войны", "Гарри Поттер", "Джентльмены", "Бэтмен", "Форсаж"];
-                    renderLocal();
-                    attachLocalHandlers();
-                    const footer = document.querySelector("footer");
-                    if (footer) footer.innerHTML += " <span style='color:#f97316;'>⚡ Локальный режим</span>";
+        // Enter в поле ввода
+        if (movieInput) {
+            movieInput.onkeypress = (e) => {
+                if (e.key === 'Enter') {
+                    const val = movieInput.value;
+                    if (addMovie(val)) movieInput.value = "";
                 }
-            }
-        );
-    }
-
-    async function addMovieFirestore(title) {
-        if (!realtimeMode) return false;
-        try {
-            await addDoc(collection(db, "movies"), { name: title.trim(), createdAt: new Date() });
-            return true;
-        } catch(e) { return false; }
-    }
-
-    async function resetFirestore() {
-        if (!realtimeMode) return;
-        try {
-            const snap = await getDocs(collection(db, "movies"));
-            const batch = writeBatch(db);
-            snap.forEach(d => batch.delete(d.ref));
-            await batch.commit();
-            const defaults = ["Властелин колец", "Хоббит", "Звёздные войны", "Гарри Поттер", "Джентльмены", "Бэтмен", "Форсаж"];
-            const addBatch = writeBatch(db);
-            defaults.forEach((film, i) => {
-                const ref = doc(collection(db, "movies"));
-                addBatch.set(ref, { name: film, createdAt: new Date(Date.now() + i * 100) });
-            });
-            await addBatch.commit();
-        } catch(e) { console.error(e); }
-    }
-
-    function attachFirestoreHandlers() {
-        const addBtn = document.getElementById("addBtn");
-        const resetBtn = document.getElementById("resetBtn");
-        const inputEl = document.getElementById("movieInput");
-        if (!addBtn || !resetBtn) return;
-        const newAdd = addBtn.cloneNode(true);
-        const newReset = resetBtn.cloneNode(true);
-        addBtn.parentNode.replaceChild(newAdd, addBtn);
-        resetBtn.parentNode.replaceChild(newReset, resetBtn);
-        
-        newAdd.addEventListener('click', async () => {
-            const val = inputEl.value.trim();
-            if (val === "") return;
-            if (realtimeMode) {
-                const ok = await addMovieFirestore(val);
-                if (ok) inputEl.value = "";
-            } else {
-                localMovies.push(val);
-                inputEl.value = "";
-                renderLocal();
-                attachLocalHandlers();
-            }
-        });
-        newReset.addEventListener('click', async () => {
-            if (realtimeMode) {
-                if (confirm("Сбросить к 7 фильмам?")) await resetFirestore();
-            } else {
-                localMovies = ["Властелин колец", "Хоббит", "Звёздные войны", "Гарри Поттер", "Джентльмены", "Бэтмен", "Форсаж"];
-                renderLocal();
-                attachLocalHandlers();
-            }
-        });
-    }
-
-    // Инициализация: пробуем Firebase
-    function init() {
-        try {
-            const app = initializeApp(firebaseConfig);
-            db = getFirestore(app);
-            moviesCollection = collection(db, "movies");
-            realtimeMode = true;
-            seedDefaultFirestore().then(() => {
-                startFirestoreSync();
-                attachFirestoreHandlers();
-            }).catch(() => fallbackToLocal());
-        } catch(e) {
-            fallbackToLocal();
+            };
         }
     }
 
-    function fallbackToLocal() {
-        realtimeMode = false;
-        localMovies = ["Властелин колец", "Хоббит", "Звёздные войны", "Гарри Поттер", "Джентльмены", "Бэтмен", "Форсаж"];
-        renderLocal();
-        attachLocalHandlers();
-        const footer = document.querySelector("footer");
-        if (footer && !footer.querySelector(".local-note")) {
-            const note = document.createElement("div");
-            note.className = "local-note";
-            note.style.marginTop = "8px";
-            note.style.color = "#facc15";
-            note.style.fontSize = "0.7rem";
-            note.innerText = "⚠️ Локальный режим (синхронизация не активна) — вставьте ключи Firebase для синхронизации между устройствами";
-            footer.appendChild(note);
-        }
-    }
-
-    init();
+    // Инициализация
+    loadFromLocalStorage();
+    bindEvents();
 </script>
 </body>
 </html>
