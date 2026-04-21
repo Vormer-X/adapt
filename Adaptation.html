@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
     <title>Мои фильмы — синхронизация</title>
-    <!-- Firebase SDK (импорт через importmap) -->
+    
     <script type="importmap">
         {
             "imports": {
@@ -29,7 +29,7 @@
             max-width: 1100px;
             margin: 0 auto;
         }
-        /* панель кнопок */
+        
         .toolbar {
             display: flex;
             gap: 10px;
@@ -69,14 +69,14 @@
         .reset-btn {
             background: #2a1f2c;
         }
-        /* сетка фильмов */
+        
         .movies-grid {
             display: grid;
             grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
             gap: 18px;
             margin-top: 10px;
         }
-        /* карточка фильма */
+        
         .movie-card {
             background: #11151c;
             border: 1px solid #252b36;
@@ -173,8 +173,6 @@
         writeBatch 
     } from "firebase/firestore";
 
-    // ========== 1. КОНФИГУРАЦИЯ FIREBASE (ЗАМЕНИТЕ НА СВОИ ДАННЫЕ) ==========
-    // ВНИМАНИЕ: ниже пример. Вы должны получить свои реальные ключи в консоли Firebase.
     const firebaseConfig = {
       apiKey: "AIzaSyAZ3i370Hhgjj7HQ0wYh42G1PeaBIfz848",
       authDomain: "adapt-12ba5.firebaseapp.com",
@@ -182,24 +180,21 @@
       storageBucket: "adapt-12ba5.firebasestorage.app",
       messagingSenderId: "297487806422",
       appId: "1:297487806422:web:afc0cb9f5227916f6f7e77",
-      measurementId: "G-5J4KWHK2ZK"   // это поле не обязательно, можно оставить или удалить
+      measurementId: "G-5J4KWHK2ZK"   
     };
-    // ---------------------------------------------------------------------
-
-    // Переменные
+    
     let db;
     let moviesCollection;
-    let unsubscribe = null;   // для отписки от реального времени
+    let unsubscribe = null;   
 
-    // Функция инициализации и запуска синхронизации
+    
     async function initFirebase() {
         try {
-            // Подключаемся к Firebase
+            
             const app = initializeApp(firebaseConfig);
             db = getFirestore(app);
-            moviesCollection = collection(db, "movies");   // коллекция называется "movies"
+            moviesCollection = collection(db, "movies");   
 
-            // Проверяем, есть ли уже фильмы в базе, если нет — добавляем 7 стартовых
             const q = query(moviesCollection, orderBy("createdAt"));
             const snapshot = await getDocs(q);
             if (snapshot.empty) {
@@ -212,20 +207,20 @@
                     const docRef = doc(moviesCollection);
                     batch.set(docRef, {
                         name: movie,
-                        createdAt: new Date(Date.now() + index * 1000) // порядок сохраняется
+                        createdAt: new Date(Date.now() + index * 1000) 
                     });
                 });
                 await batch.commit();
                 console.log("База заполнена 7 фильмами");
             }
 
-            // Запускаем прослушивание изменений в реальном времени
+            
             const orderedQuery = query(moviesCollection, orderBy("createdAt", "asc"));
             unsubscribe = onSnapshot(orderedQuery, (snapshot) => {
                 renderMovies(snapshot);
             });
 
-            // Привязываем обработчики кнопок
+            
             attachButtonHandlers();
         } catch (error) {
             console.error("Ошибка подключения к Firebase:", error);
@@ -237,7 +232,7 @@
         }
     }
 
-    // Отрисовка списка фильмов из Firestore
+    
     function renderMovies(snapshot) {
         const container = document.getElementById("moviesContainer");
         if (!container) return;
@@ -264,7 +259,7 @@
         });
         container.innerHTML = html;
 
-        // Навешиваем обработчики на кнопки удаления
+        
         document.querySelectorAll('.delete-btn').forEach(btn => {
             btn.addEventListener('click', async (e) => {
                 e.stopPropagation();
@@ -282,7 +277,7 @@
         });
     }
 
-    // Добавление нового фильма
+    
     async function addMovie(title) {
         if (!title.trim()) return false;
         try {
@@ -298,12 +293,12 @@
         }
     }
 
-    // Сброс к исходным 7 фильмам (удаляем все, создаём заново)
+    
     async function resetToDefault() {
         if (!db) return;
         if (!confirm("Сбросить список к 7 фильмам? (Властелин колец, Хоббит, Звёздные войны, Гарри Поттер, Джентльмены, Бэтмен, Форсаж)")) return;
         try {
-            // Получаем все документы
+            
             const snapshot = await getDocs(moviesCollection);
             const batch = writeBatch(db);
             snapshot.forEach(docSnap => {
@@ -311,7 +306,7 @@
             });
             await batch.commit();
 
-            // Добавляем 7 фильмов
+            
             const defaultMovies = [
                 "Властелин колец", "Хоббит", "Звёздные войны",
                 "Гарри Поттер", "Джентльмены", "Бэтмен", "Форсаж"
@@ -332,7 +327,7 @@
         }
     }
 
-    // Привязываем обработчики к кнопкам (+ Добавить и Сброс)
+    
     function attachButtonHandlers() {
         const addBtn = document.getElementById("addBtn");
         const resetBtn = document.getElementById("resetBtn");
@@ -340,7 +335,7 @@
 
         if (!addBtn || !resetBtn) return;
 
-        // Убираем старые обработчики (если были) через клонирование
+        
         const newAdd = addBtn.cloneNode(true);
         const newReset = resetBtn.cloneNode(true);
         addBtn.parentNode.replaceChild(newAdd, addBtn);
@@ -357,7 +352,7 @@
             await resetToDefault();
         });
 
-        // Добавляем возможность добавления по Enter
+        
         inputEl.addEventListener('keypress', async (e) => {
             if (e.key === 'Enter') {
                 const value = inputEl.value.trim();
@@ -368,7 +363,7 @@
         });
     }
 
-    // Функция для безопасного вывода HTML
+    
     function escapeHtml(str) {
         return str.replace(/[&<>]/g, function(m) {
             if (m === '&') return '&amp;';
@@ -378,7 +373,7 @@
         });
     }
 
-    // Запуск приложения
+    
     initFirebase();
 </script>
 </body>
